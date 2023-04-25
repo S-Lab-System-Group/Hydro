@@ -1,0 +1,74 @@
+site_name: Hydro Project
+site_url: https://s-lab-system-group.github.io/Hydro/
+site_author: Qinghao Hu
+site_description: Surrogate-based Hyperparameter Tuning System
+
+# Repository
+repo_name: S-Lab-System-Group/Hydro
+repo_url: https://github.com/S-Lab-System-Group/Hydro
+
+theme:
+  name: material
+  logo: assets/icon-white.svg
+  favicon: assets/icon.svg
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+  language: en
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to dark mode
+      primary: blue
+      accent: purple
+    - scheme: slate
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to light mode
+      primary: blue
+      accent: lime
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - admonition
+  - pymdownx.arithmatex:
+      generic: true
+  - footnotes
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.mark
+  - attr_list
+  - pymdownx.emoji:
+      emoji_index: !!python/name:materialx.emoji.twemoji
+      emoji_generator: !!python/name:materialx.emoji.to_svg
+
+copyright: |
+  &copy; 2023 <a href="https://github.com/james-willett"  target="_blank" rel="noopener">James Willett</a>
+
+# Page tree
+nav:
+  - Home: index.md
+  - Overview:
+      - overview/index.md
+  - Getting Started:
+      - getting_started/index.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github-alt
+      link: https://github.com/S-Lab-System-Group/Hydro
+    # - icon: fontawesome/brands/
+    #   link: https://twitter.com/TheJamesWillett
+    # - icon: fontawesome/brands/linkedin
+    #   link: https://www.linkedin.com/in/willettjames/

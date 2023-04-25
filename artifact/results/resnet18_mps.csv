@@ -1,0 +1,3 @@
+,dataset,model,bs,amp,fusion,scale,speed(s),parameters,MACs,MPS,gpu_util,gmem_util,gmem
+0,cifar10,resnet18,256,False,1,1,14.930467128753662,11.174M,141.000M,5,99.015,54.015,11657
+0,cifar10,resnet18,256,False,1,1,39.72753572463989,11.174M,141.000M,10,100.0,51.117,23295

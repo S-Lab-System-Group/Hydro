@@ -1,0 +1,22 @@
+name: 💡 Feature Request
+description: Submit a proposal/request for a new Hydro feature
+labels: [enhancement, triage]
+
+body:
+  - type: textarea
+    attributes:
+      label: 💡 The feature description
+      description: >
+        A clear and concise description of the feature proposal. Please outline the motivation for the proposal.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Use case / Additional context
+      description: >
+        Add any other context or use case.
+  - type: markdown
+    attributes:
+      value: >
+        Thanks for contributing 🎉!
