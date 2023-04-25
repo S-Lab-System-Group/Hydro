@@ -52,7 +52,7 @@ pip install hydro-tune
 (Option 2) We also provide a Docker image to run the experiments in a container:
 
 ```bash
-TODO
+docker pull tonyhao96/hydro
 ```
 
 ### **B. Figure 8: Fusion and Scaling Efficiency.**
