@@ -77,9 +77,17 @@ def get_datasets(dataset):
             )
     elif dataset == "cifar100":
         normalize = transforms.Normalize(mean=[0.5071, 0.4865, 0.4409], std=[0.2673, 0.2564, 0.2762])
-        with FileLock(Path("~/data/data.lock").expanduser()):
+        lock_file = Path("./data/data.lock")
+
+        if not lock_file.exists():
+            if not Path("./data").exists():
+                Path("./data").mkdir()
+            with open(lock_file, "w") as f:
+                f.write("")
+
+        with FileLock(lock_file):
             train_dataset = datasets.CIFAR100(
-                root="~/data",
+                root="./data",
                 train=True,
                 download=True,
                 transform=transforms.Compose(
@@ -87,13 +95,21 @@ def get_datasets(dataset):
                 ),
             )
             val_dataset = datasets.CIFAR100(
-                root="~/data", train=False, download=False, transform=transforms.Compose([transforms.ToTensor(), normalize])
+                root="./data", train=False, download=False, transform=transforms.Compose([transforms.ToTensor(), normalize])
             )
     elif dataset == "cifar10":
         normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2470, 0.2435, 0.2616])
-        with FileLock(Path("~/data/data.lock").expanduser()):
+        lock_file = Path("./data/data.lock")
+
+        if not lock_file.exists():
+            if not Path("./data").exists():
+                Path("./data").mkdir()
+            with open(lock_file, "w") as f:
+                f.write("")
+
+        with FileLock(lock_file):
             train_dataset = datasets.CIFAR10(
-                root="~/data",
+                root="./data",
                 train=True,
                 download=True,
                 transform=transforms.Compose(
@@ -101,7 +117,7 @@ def get_datasets(dataset):
                 ),
             )
             val_dataset = datasets.CIFAR10(
-                root="~/data", train=False, download=False, transform=transforms.Compose([transforms.ToTensor(), normalize])
+                root="./data", train=False, download=False, transform=transforms.Compose([transforms.ToTensor(), normalize])
             )
     else:
         raise ValueError("Incorrect dataset name.")
