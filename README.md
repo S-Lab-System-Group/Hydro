@@ -198,7 +198,11 @@ Number of trials: 50/50 (50 TERMINATED)
 +--------------------------+------------+----------------------+------------------------+------------------------+------------------------+------------------------+--------+------------------+----------+-----------+--------------+
 ```
 
-You can check the `Current best trial` shown in the log after all trial finished, and the total tuning time is record in `Current time: (running for xxx)`.
+You can check the `Current best trial` shown in the log after all trial finished, and the total tuning time is record in `Current time: (running for xxx)`. For example, the final best trial of Ray is: 
+
+```
+Current best trial: befae_00002 with val_acc=0.9161 and parameters={'train_loop_config': {'lr': 0.1102, 'momentum': 0.584, 'batch_size': 128, 'gamma': 0.14, 'dataset': 'cifar10', 'seed': 10}}
+```
 
 > If you find Ray process is not killed after the script is finished (e.g., GPU memory is still occupied), you can kill it manually by: `ray stop --force`.
 
@@ -231,7 +235,13 @@ Number of trials: 8/50 (8 TERMINATED)
 +--------------------------+------------+----------------------+----------+------+----------------------+----------------------+----------------------+--------+------------------+--------------+---------------------+-----------------------+
 ```
 
-You can check the `Current best trial` and `Current time: (running for xxx)` shown in the log after all trial finished, and compare it with the result of Ray.
+You can check the `Current best trial` and `Current time: (running for xxx)` shown in the log after all trial finished, and compare it with the result of Ray. For example, the final best trial of Hydro is: 
+
+```
+Current best trial: b38f6_T0001(target trial) with val_acc=0.9162 and parameters={'lr': 0.1102, 'momentum': 0.584, 'batch_size': 128, 'gamma': 0.14, 'dataset': 'cifar10', 'seed': 10, 'FUSION_N': 0, 'SCALING_N': 0}
+```
+
+which is the same as the hyperparameter of best trial searched by Ray.
 
 More details please refer to `ray.csv` and `hydro_parsed.csv` in the `results` folder.
 
