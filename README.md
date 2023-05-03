@@ -63,7 +63,7 @@ To reproduce Figure 8 in the paper (that is, accumulated throughout and GPU memo
 
 ```bash
 cd artifact
-bash 1_run_fidelity.sh 
+bash 1_run_efficiency.sh 
 ```
 
 It sweep different fusion number with & without scaling ($S=8$ by default) of surrogate model, and packing target model directly. These workloads are placed on different GPUs. Note that here the MPS throughput is measured without starting the MPS server to avoid potential failures in subsequent experiments.
