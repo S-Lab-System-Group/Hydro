@@ -56,7 +56,7 @@ docker pull tonyhao96/hydro
 ```
 
 ### **B. Figure 8: Fusion and Scaling Efficiency.**
-**(Evaluation Time Estimation: 10 minutes)**
+**(Evaluation Time Estimation: 20 minutes)**
 
 
 To reproduce Figure 8 in the paper (that is, accumulated throughout and GPU memory footprint of fused surrogate model w.r.t packing the target model), one can use the following command line:

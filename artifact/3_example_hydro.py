@@ -103,8 +103,8 @@ def train_func(config):
 
     worker_batch_size = config["batch_size"] // session.get_world_size()
     train_set, val_set = get_datasets(dataset)
-    train_loader = DataLoader(train_set, batch_size=worker_batch_size, num_workers=8, pin_memory=True, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=worker_batch_size, num_workers=8, pin_memory=True)
+    train_loader = DataLoader(train_set, batch_size=worker_batch_size, num_workers=4, pin_memory=True, shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=worker_batch_size, num_workers=4, pin_memory=True)
     train_loader = ht.prepare_data_loader(train_loader)
     val_loader = ht.prepare_data_loader(val_loader)
 

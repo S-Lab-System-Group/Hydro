@@ -56,7 +56,7 @@ def logger_init(file):
     return logger
 
 
-def get_datasets(dataset):
+def get_datasets(dataset, download=True):
     """Data loader for Cifar10/100 & Imagenet"""
     if dataset == "imagenet":
         # traindir = os.path.join("/home/data/imagenet", "train")
@@ -77,47 +77,47 @@ def get_datasets(dataset):
             )
     elif dataset == "cifar100":
         normalize = transforms.Normalize(mean=[0.5071, 0.4865, 0.4409], std=[0.2673, 0.2564, 0.2762])
-        lock_file = Path("./data/data.lock")
+        lock_file = Path("~/data/data.lock").expanduser()
 
         if not lock_file.exists():
-            if not Path("./data").exists():
-                Path("./data").mkdir()
+            if not Path("~/data").exists():
+                Path("~/data").expanduser().mkdir()
             with open(lock_file, "w") as f:
                 f.write("")
 
         with FileLock(lock_file):
             train_dataset = datasets.CIFAR100(
-                root="./data",
+                root="~/data",
                 train=True,
-                download=True,
+                download=download,
                 transform=transforms.Compose(
                     [transforms.RandomCrop(32, padding=4), transforms.RandomHorizontalFlip(), transforms.ToTensor(), normalize]
                 ),
             )
             val_dataset = datasets.CIFAR100(
-                root="./data", train=False, download=False, transform=transforms.Compose([transforms.ToTensor(), normalize])
+                root="~/data", train=False, download=False, transform=transforms.Compose([transforms.ToTensor(), normalize])
             )
     elif dataset == "cifar10":
         normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2470, 0.2435, 0.2616])
-        lock_file = Path("./data/data.lock")
+        lock_file = Path("~/data/data.lock").expanduser()
 
         if not lock_file.exists():
-            if not Path("./data").exists():
-                Path("./data").mkdir()
+            if not Path("~/data").exists():
+                Path("~/data").expanduser().mkdir()
             with open(lock_file, "w") as f:
                 f.write("")
 
         with FileLock(lock_file):
             train_dataset = datasets.CIFAR10(
-                root="./data",
+                root="~/data",
                 train=True,
-                download=True,
+                download=download,
                 transform=transforms.Compose(
                     [transforms.RandomCrop(32, padding=4), transforms.RandomHorizontalFlip(), transforms.ToTensor(), normalize]
                 ),
             )
             val_dataset = datasets.CIFAR10(
-                root="./data", train=False, download=False, transform=transforms.Compose([transforms.ToTensor(), normalize])
+                root="~/data", train=False, download=False, transform=transforms.Compose([transforms.ToTensor(), normalize])
             )
     else:
         raise ValueError("Incorrect dataset name.")
