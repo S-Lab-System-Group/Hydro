@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional, Type, Union, Tuple, Iterable
+from typing import Union
 
 import logging
 import torch
@@ -24,13 +24,11 @@ _SUPPORTED_INIT_MODULE_LIST = [
     nn.TransformerDecoderLayer,
     fnn.Conv1d,
     fnn.Conv2d,
-    # fnn.ConvTranspose1d,
     fnn.ConvTranspose2d,
     fnn.Linear,
     fnn.Embedding,
     fnn.LayerNorm,
     fnn.TransformerEncoderLayer,
-    # fnn.TransformerDecoderLayer,
 ]
 
 

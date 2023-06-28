@@ -20,12 +20,12 @@ from torch.utils._foreach_utils import _group_tensors_by_device_and_dtype
 
 from .utils import Coefficient, is_coefficient, make_coefficient, reduce_array_if_possible_for
 
-__all__ = ["Adam", "adam"]
+__all__ = ["AdamW", "adamw"]
 
 
-class Adam(Optimizer):
+class AdamW(Optimizer):
     r"""Pytorch 2.0
-    Implements Adam algorithm.
+    Implements AdamW algorithm.
     """
 
     def __init__(
@@ -34,7 +34,7 @@ class Adam(Optimizer):
         lr=1e-3,
         betas=(0.9, 0.999),
         eps=1e-8,
-        weight_decay=0,
+        weight_decay=1e-2,
         amsgrad=False,
         *,
         scaling_num: Union[int, float] = -1,
@@ -93,40 +93,50 @@ class Adam(Optimizer):
             for s in state_values:
                 s["step"] = torch.tensor(float(s["step"]))
 
-    def _init_group(self, group, params_with_grad, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps):
+    def _init_group(
+        self,
+        group,
+        params_with_grad,
+        grads,
+        amsgrad,
+        exp_avgs,
+        exp_avg_sqs,
+        max_exp_avg_sqs,
+        state_steps,
+    ):
         for p in group["params"]:
-            if p.grad is not None:
-                params_with_grad.append(p)
-                if p.grad.is_sparse:
-                    raise RuntimeError("Adam does not support sparse gradients, please consider SparseAdam instead")
-                grads.append(p.grad)
+            if p.grad is None:
+                continue
+            params_with_grad.append(p)
+            if p.grad.is_sparse:
+                raise RuntimeError("AdamW does not support sparse gradients")
+            grads.append(p.grad)
 
-                state = self.state[p]
-                # Lazy state initialization
-                if len(state) == 0:
-                    state["step"] = (
-                        torch.zeros((1,), dtype=torch.float, device=p.device)
-                        if group["capturable"] or group["fused"]
-                        else torch.tensor(0.0)
-                    )
-                    # Exponential moving average of gradient values
-                    state["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                    # Exponential moving average of squared gradient values
-                    state["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
-                    if group["amsgrad"]:
-                        # Maintains max of all exp. moving avg. of sq. grad. values
-                        state["max_exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+            state = self.state[p]
 
-                exp_avgs.append(state["exp_avg"])
-                exp_avg_sqs.append(state["exp_avg_sq"])
+            # State initialization
+            if len(state) == 0:
+                state["step"] = (
+                    torch.zeros((1,), dtype=torch.float, device=p.device)
+                    if group["capturable"] or group["fused"]
+                    else torch.tensor(0.0)
+                )
+                # Exponential moving average of gradient values
+                state["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                # Exponential moving average of squared gradient values
+                state["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                if amsgrad:
+                    # Maintains max of all exp. moving avg. of sq. grad. values
+                    state["max_exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
 
-                if group["amsgrad"]:
-                    max_exp_avg_sqs.append(state["max_exp_avg_sq"])
-                if group["differentiable"] and state["step"].requires_grad:
-                    raise RuntimeError("`requires_grad` is not supported for `step` in differentiable mode")
-                state_steps.append(state["step"])
+            exp_avgs.append(state["exp_avg"])
+            exp_avg_sqs.append(state["exp_avg_sq"])
 
-    # @torch.no_grad()
+            if amsgrad:
+                max_exp_avg_sqs.append(state["max_exp_avg_sq"])
+
+            state_steps.append(state["step"])
+
     @_use_grad_for_differentiable
     def step(self, closure=None):
         """Performs a single optimization step.
@@ -149,18 +159,28 @@ class Adam(Optimizer):
             exp_avg_sqs = []
             max_exp_avg_sqs = []
             state_steps = []
+            amsgrad = group["amsgrad"]
             beta1, beta2 = group["betas"]
 
-            self._init_group(group, params_with_grad, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps)
+            self._init_group(
+                group,
+                params_with_grad,
+                grads,
+                amsgrad,
+                exp_avgs,
+                exp_avg_sqs,
+                max_exp_avg_sqs,
+                state_steps,
+            )
 
-            adam(
+            adamw(
                 params_with_grad,
                 grads,
                 exp_avgs,
                 exp_avg_sqs,
                 max_exp_avg_sqs,
                 state_steps,
-                amsgrad=group["amsgrad"],
+                amsgrad=amsgrad,
                 beta1=beta1,
                 beta2=beta2,
                 lr=group["lr"],
@@ -179,26 +199,26 @@ class Adam(Optimizer):
         return loss
 
 
-Adam.__doc__ = r"""Implements Adam algorithm.
+AdamW.__doc__ = r"""Implements AdamW algorithm.
 
     .. math::
        \begin{aligned}
             &\rule{110mm}{0.4pt}                                                                 \\
-            &\textbf{input}      : \gamma \text{ (lr)}, \beta_1, \beta_2
-                \text{ (betas)},\theta_0 \text{ (params)},f(\theta) \text{ (objective)}          \\
-            &\hspace{13mm}      \lambda \text{ (weight decay)},  \: \textit{amsgrad},
-                \:\textit{maximize}                                                              \\
-            &\textbf{initialize} :  m_0 \leftarrow 0 \text{ ( first moment)},
-                v_0\leftarrow 0 \text{ (second moment)},\: \widehat{v_0}^{max}\leftarrow 0\\[-1.ex]
+            &\textbf{input}      : \gamma \text{(lr)}, \: \beta_1, \beta_2
+                \text{(betas)}, \: \theta_0 \text{(params)}, \: f(\theta) \text{(objective)},
+                \: \epsilon \text{ (epsilon)}                                                    \\
+            &\hspace{13mm}      \lambda \text{(weight decay)},  \: \textit{amsgrad},
+                \: \textit{maximize}                                                             \\
+            &\textbf{initialize} : m_0 \leftarrow 0 \text{ (first moment)}, v_0 \leftarrow 0
+                \text{ ( second moment)}, \: \widehat{v_0}^{max}\leftarrow 0              \\[-1.ex]
             &\rule{110mm}{0.4pt}                                                                 \\
             &\textbf{for} \: t=1 \: \textbf{to} \: \ldots \: \textbf{do}                         \\
 
             &\hspace{5mm}\textbf{if} \: \textit{maximize}:                                       \\
-            &\hspace{10mm}g_t           \leftarrow   -\nabla_{\theta} f_t (\theta_{t-1})         \\
+            &\hspace{10mm}g_t           \leftarrow   -\nabla_{\theta} f_t (\theta_{t-1})          \\
             &\hspace{5mm}\textbf{else}                                                           \\
-            &\hspace{10mm}g_t           \leftarrow   \nabla_{\theta} f_t (\theta_{t-1})          \\
-            &\hspace{5mm}\textbf{if} \: \lambda \neq 0                                           \\
-            &\hspace{10mm} g_t \leftarrow g_t + \lambda  \theta_{t-1}                            \\
+            &\hspace{10mm}g_t           \leftarrow   \nabla_{\theta} f_t (\theta_{t-1})           \\
+            &\hspace{5mm} \theta_t \leftarrow \theta_{t-1} - \gamma \lambda \theta_{t-1}         \\
             &\hspace{5mm}m_t           \leftarrow   \beta_1 m_{t-1} + (1 - \beta_1) g_t          \\
             &\hspace{5mm}v_t           \leftarrow   \beta_2 v_{t-1} + (1-\beta_2) g^2_t          \\
             &\hspace{5mm}\widehat{m_t} \leftarrow   m_t/\big(1-\beta_1^t \big)                   \\
@@ -206,17 +226,17 @@ Adam.__doc__ = r"""Implements Adam algorithm.
             &\hspace{5mm}\textbf{if} \: amsgrad                                                  \\
             &\hspace{10mm}\widehat{v_t}^{max} \leftarrow \mathrm{max}(\widehat{v_t}^{max},
                 \widehat{v_t})                                                                   \\
-            &\hspace{10mm}\theta_t \leftarrow \theta_{t-1} - \gamma \widehat{m_t}/
+            &\hspace{10mm}\theta_t \leftarrow \theta_t - \gamma \widehat{m_t}/
                 \big(\sqrt{\widehat{v_t}^{max}} + \epsilon \big)                                 \\
             &\hspace{5mm}\textbf{else}                                                           \\
-            &\hspace{10mm}\theta_t \leftarrow \theta_{t-1} - \gamma \widehat{m_t}/
+            &\hspace{10mm}\theta_t \leftarrow \theta_t - \gamma \widehat{m_t}/
                 \big(\sqrt{\widehat{v_t}} + \epsilon \big)                                       \\
             &\rule{110mm}{0.4pt}                                                          \\[-1.ex]
             &\bf{return} \:  \theta_t                                                     \\[-1.ex]
             &\rule{110mm}{0.4pt}                                                          \\[-1.ex]
        \end{aligned}
 
-    For further details regarding the algorithm we refer to `Adam: A Method for Stochastic Optimization`_.
+    For further details regarding the algorithm we refer to `Decoupled Weight Decay Regularization`_.
     """ + r"""
     Args:
         params (iterable): iterable of parameters to optimize or dicts defining
@@ -226,30 +246,30 @@ Adam.__doc__ = r"""Implements Adam algorithm.
             running averages of gradient and its square (default: (0.9, 0.999))
         eps (float, optional): term added to the denominator to improve
             numerical stability (default: 1e-8)
-        weight_decay (float, optional): weight decay (L2 penalty) (default: 0)
+        weight_decay (float, optional): weight decay coefficient (default: 1e-2)
         amsgrad (bool, optional): whether to use the AMSGrad variant of this
             algorithm from the paper `On the Convergence of Adam and Beyond`_
             (default: False)
-        {foreach}
         {maximize}
+        {foreach}
         {capturable}
         {differentiable}
         {fused}
-    .. _Adam\: A Method for Stochastic Optimization:
-        https://arxiv.org/abs/1412.6980
+    .. _Decoupled Weight Decay Regularization:
+        https://arxiv.org/abs/1711.05101
     .. _On the Convergence of Adam and Beyond:
         https://openreview.net/forum?id=ryQu7f-RZ
 
     """.format(
-    foreach=_foreach_doc,
     maximize=_maximize_doc,
+    foreach=_foreach_doc,
+    fused=_fused_doc,
     capturable=_capturable_doc,
     differentiable=_differentiable_doc,
-    fused=_fused_doc,
 )
 
 
-def adam(
+def adamw(
     params: List[Tensor],
     grads: List[Tensor],
     exp_avgs: List[Tensor],
@@ -274,37 +294,39 @@ def adam(
     maximize: bool,
     scaling_num: Union[int, float],
 ):
-    r"""Functional API that performs Adam algorithm computation.
-    See :class:`~torch.optim.Adam` for details.
+    r"""Functional API that performs AdamW algorithm computation.
+
+    See :class:`~torch.optim.AdamW` for details.
     """
+
+    if not all(isinstance(t, torch.Tensor) for t in state_steps):
+        raise RuntimeError("API has changed, `state_steps` argument must contain a list of singleton tensors")
 
     # Respect when the user inputs False/True for foreach or fused. We only want to change
     # the default when neither have been user-specified. Note that we default to foreach
     # and pass False to use_fused. This is not a mistake--we want to give the fused impl
     # bake-in time before making it the default, even if it is typically faster.
     if fused is None and foreach is None:
-        # _, foreach = _default_to_fused_or_foreach(params, differentiable, use_fused=False)
-
+        _, foreach = _default_to_fused_or_foreach(params, differentiable, use_fused=False)
         foreach = False  # not implemented in Hydro
     if fused is None:
         fused = False
     if foreach is None:
         foreach = False
 
-    if not all(isinstance(t, torch.Tensor) for t in state_steps):
-        raise RuntimeError("API has changed, `state_steps` argument must contain a list of singleton tensors")
-
     if foreach and torch.jit.is_scripting():
         raise RuntimeError("torch.jit.script not supported with foreach optimizers")
+    if fused and torch.jit.is_scripting():
+        raise RuntimeError("torch.jit.script not supported with fused optimizers")
 
     if fused and not torch.jit.is_scripting():
-        func = _fused_adam
-        raise NotImplementedError("Currently, `fused_adam` is not implemented in Hydro")
+        func = _fused_adamw
+        raise NotImplementedError("Currently, `fused_adamw` is not implemented in Hydro")
     elif foreach and not torch.jit.is_scripting():
-        func = _multi_tensor_adam
-        raise NotImplementedError("Currently, `_multi_tensor_adam` is not implemented in Hydro")
+        func = _multi_tensor_adamw
+        raise NotImplementedError("Currently, `multi_tensor_adamw` is not implemented in Hydro")
     else:
-        func = _single_tensor_adam
+        func = _single_tensor_adamw
 
     func(
         params,
@@ -328,7 +350,7 @@ def adam(
     )
 
 
-def _single_tensor_adam(
+def _single_tensor_adamw(
     params: List[Tensor],
     grads: List[Tensor],
     exp_avgs: List[Tensor],
@@ -349,6 +371,8 @@ def _single_tensor_adam(
     differentiable: bool,
     scaling_num: Union[int, float],
 ):
+    # assert grad_scale is None and found_inf is None
+
     for i, param in enumerate(params):
         grad = grads[i] if not maximize else -grads[i]
         exp_avg = exp_avgs[i]
@@ -361,20 +385,24 @@ def _single_tensor_adam(
         else:
             assert not step_t.is_cuda, "If capturable=False, state_steps should not be CUDA tensors."
 
-        # update step
-        step_t += 1
-
-        if is_coefficient(weight_decay) or weight_decay != 0:
-            if is_coefficient(weight_decay):
-                grad = grad + weight_decay[param] * param
-            else:
-                grad = grad.add(param, alpha=weight_decay)
-
         if torch.is_complex(param):
             grad = torch.view_as_real(grad)
             exp_avg = torch.view_as_real(exp_avg)
             exp_avg_sq = torch.view_as_real(exp_avg_sq)
             param = torch.view_as_real(param)
+
+        # update step
+        step_t += 1
+
+        # Perform stepweight decay
+        if is_coefficient(weight_decay) and is_coefficient(lr):
+            param.mul_(1 - lr[param] * weight_decay[param])
+        elif is_coefficient(weight_decay):
+            param.mul_(1 - lr * weight_decay[param])
+        elif is_coefficient(lr):
+            param.mul_(1 - lr[param] * weight_decay)
+        else:
+            param.mul_(1 - lr * weight_decay)
 
         # Decay the first and second moment running average coefficient
         if is_coefficient(beta1):
@@ -383,9 +411,9 @@ def _single_tensor_adam(
             exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
 
         if is_coefficient(beta2):
-            exp_avg_sq.mul_(beta2[param]).add_((1 - beta2[param]) * grad * grad.conj())
+            exp_avg_sq.mul_(beta2[param]).add_((1 - beta2[param]) * grad * grad)
         else:
-            exp_avg_sq.mul_(beta2).addcmul_(grad, grad.conj(), value=1 - beta2)
+            exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
 
         if capturable:
             step = step_t
@@ -458,7 +486,7 @@ def _single_tensor_adam(
                 param.addcdiv_(exp_avg, denom, value=-step_size)
 
 
-def _multi_tensor_adam(
+def _multi_tensor_adamw(
     params: List[Tensor],
     grads: List[Tensor],
     exp_avgs: List[Tensor],
@@ -487,9 +515,9 @@ def _multi_tensor_adam(
             p.is_cuda and step.is_cuda for p, step in zip(params, state_steps)
         ), "If capturable=True, params and state_steps must be CUDA tensors."
 
-    assert grad_scale is None and found_inf is None
-
     assert not differentiable, "_foreach ops don't support autograd"
+
+    assert grad_scale is None and found_inf is None
 
     grouped_tensors = _group_tensors_by_device_and_dtype([params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps])
     for (
@@ -503,17 +531,16 @@ def _multi_tensor_adam(
         if maximize:
             device_grads = torch._foreach_neg(tuple(device_grads))  # type: ignore[assignment]
 
-        # Handle complex parameters
         device_grads = [torch.view_as_real(x) if torch.is_complex(x) else x for x in device_grads]
         device_exp_avgs = [torch.view_as_real(x) if torch.is_complex(x) else x for x in device_exp_avgs]
         device_exp_avg_sqs = [torch.view_as_real(x) if torch.is_complex(x) else x for x in device_exp_avg_sqs]
-        params_ = [torch.view_as_real(x) if torch.is_complex(x) else x for x in device_params]
+        device_params = [torch.view_as_real(x) if torch.is_complex(x) else x for x in device_params]
 
         # update steps
         torch._foreach_add_(device_state_steps, 1)
 
-        if weight_decay != 0:
-            device_grads = torch._foreach_add(device_grads, device_params, alpha=weight_decay)
+        # Perform stepweight decay
+        torch._foreach_mul_(device_params, 1 - lr * weight_decay)
 
         # Decay the first and second moment running average coefficient
         torch._foreach_mul_(device_exp_avgs, beta1)
@@ -541,13 +568,16 @@ def _multi_tensor_adam(
 
             if amsgrad:
                 # Maintains the maximum of all 2nd moment running avg. till now
-                torch._foreach_maximum_(device_max_exp_avg_sqs, device_exp_avg_sqs)  # type: ignore[assignment]
+                torch._foreach_maximum_(device_max_exp_avg_sqs, device_exp_avg_sqs)
 
                 # Use the max. for normalizing running avg. of gradient
                 max_exp_avg_sq_sqrt = torch._foreach_sqrt(device_max_exp_avg_sqs)
                 # Folds in (admittedly ugly) 1-elem step_size math here to avoid extra param-set-sized read+write
                 # (can't fold it into addcdiv_ below because addcdiv_ requires value is a Number, not a Tensor)
-                torch._foreach_div_(max_exp_avg_sq_sqrt, torch._foreach_mul(bias_correction2_sqrt, step_size))
+                torch._foreach_div_(
+                    max_exp_avg_sq_sqrt,
+                    torch._foreach_mul(bias_correction2_sqrt, step_size),
+                )
                 eps_over_step_size = torch._foreach_div(step_size, eps)
                 torch._foreach_reciprocal_(eps_over_step_size)
                 denom = torch._foreach_add(max_exp_avg_sq_sqrt, eps_over_step_size)
@@ -558,7 +588,7 @@ def _multi_tensor_adam(
                 torch._foreach_reciprocal_(eps_over_step_size)
                 denom = torch._foreach_add(exp_avg_sq_sqrt, eps_over_step_size)
 
-            torch._foreach_addcdiv_(params_, device_exp_avgs, denom)
+            torch._foreach_addcdiv_(device_params, device_exp_avgs, denom)
         else:
             bias_correction1 = [1 - beta1 ** _get_value(step) for step in device_state_steps]
             bias_correction2 = [1 - beta2 ** _get_value(step) for step in device_state_steps]
@@ -580,10 +610,10 @@ def _multi_tensor_adam(
                 torch._foreach_div_(exp_avg_sq_sqrt, bias_correction2_sqrt)
                 denom = torch._foreach_add(exp_avg_sq_sqrt, eps)
 
-            torch._foreach_addcdiv_(params_, device_exp_avgs, denom, step_size)
+            torch._foreach_addcdiv_(device_params, device_exp_avgs, denom, step_size)
 
 
-def _fused_adam(
+def _fused_adamw(
     params: List[Tensor],
     grads: List[Tensor],
     exp_avgs: List[Tensor],
@@ -604,7 +634,8 @@ def _fused_adam(
     differentiable: bool,
     scaling_num: Union[int, float],
 ) -> None:
-    grouped_tensors = _group_tensors_by_device_and_dtype([params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps])
+    if differentiable:
+        raise RuntimeError("_fused_adamw is not differentiable")
     grad_scale_dict = {grad_scale.device: grad_scale} if grad_scale is not None else None
     found_inf_dict = {found_inf.device: found_inf} if found_inf is not None else None
     grouped_tensors = _group_tensors_by_device_and_dtype([params, grads, exp_avgs, exp_avg_sqs, max_exp_avg_sqs, state_steps])
@@ -617,18 +648,17 @@ def _fused_adam(
             device_max_exp_avg_sqs,
             device_state_steps,
         ) = grouped_tensors[(device, dtype)]
-        if grad_scale is not None and found_inf is not None:
+        device_grad_scale, device_found_inf = None, None
+        if grad_scale is not None:
             if device not in grad_scale_dict:
                 grad_scale_dict[device] = grad_scale.to(device, non_blocking=True)
+            device_grad_scale = grad_scale_dict[device]
+        if found_inf is not None:
             if found_inf not in found_inf_dict:
                 found_inf_dict[device] = found_inf.to(device, non_blocking=True)
-            device_grad_scale = grad_scale_dict[device]
             device_found_inf = found_inf_dict[device]
-        else:
-            device_grad_scale = None
-            device_found_inf = None
         torch._foreach_add_(device_state_steps, 1)
-        torch._fused_adam_(
+        torch._fused_adamw_(
             device_params,
             device_grads,
             device_exp_avgs,

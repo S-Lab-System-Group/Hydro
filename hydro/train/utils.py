@@ -5,7 +5,8 @@ import types
 import warnings
 import collections
 import functools
-from distutils.version import LooseVersion
+from packaging.version import Version
+from importlib.util import find_spec
 
 from typing import Any, Dict, Optional, Callable
 
@@ -24,7 +25,7 @@ import torch
 from torch.cuda.amp import autocast, GradScaler
 from torch.nn.parallel import DistributedDataParallel
 
-if LooseVersion(torch.__version__) < LooseVersion("1.11.0"):
+if Version(torch.__version__) < Version("1.11.0"):
     FullyShardedDataParallel = None
 else:
     from torch.distributed.fsdp import FullyShardedDataParallel
@@ -36,6 +37,12 @@ from torch.utils.data import (
     RandomSampler,
 )
 
+transformers_available = find_spec("transformers")
+if transformers_available is not None:
+    from transformers import PreTrainedModel
+    from hydro.fuse_ops.huggingface import HF_MODEL_MAP
+
+COMPILE_DETERMINISTIC = "COMPILE_DETERMINISTIC"
 FUSION_N = "FUSION_N"
 SCALING_N = "SCALING_N"
 PREVIOUS_MODEL = "PREVIOUS_MODEL"
@@ -286,6 +293,7 @@ class _TorchAccelerator(Accelerator):
         self.scaler = GradScaler() if amp else None
         self._seed = None
 
+        self.deterministic_trial = self.config.get(COMPILE_DETERMINISTIC, False)
         self.fusion_num = self.config.get(FUSION_N, -1)
         self.scaling_num = self.config.get(SCALING_N, -1)
         self.previous_model = self.config.get(PREVIOUS_MODEL, None)
@@ -314,6 +322,52 @@ class _TorchAccelerator(Accelerator):
         logger.info(f"Model has been fused ({self.fusion_num}) and scaled ({self.scaling_num})")
         return fused_model
 
+    def prepare_torch_model(self, model: torch.nn.Module) -> torch.nn.Module:
+        model = symbolic_trace(model)
+
+        if self.previous_model is not None:
+            pre_model = self.previous_model  # Continue training from previous model
+
+            base_model = fuse_model(model, 1)
+            base_scaled_model = scale_fused_model(base_model, scaling_ratio=self.scaling_num)
+            base_shape = make_base_shapes(base_model, base_scaled_model, savefile=None)
+
+            set_base_shapes(pre_model, base_shape)
+            logger.info("Previous model has been loaded.")
+            model = pre_model
+        else:
+            if self.fusion_num > 0 and self.scaling_num > 0:
+                model = self.model_scaling_and_fusion(model)
+            # Enable model fusion
+            elif self.fusion_num > 0:
+                model = self.model_fusion(model)
+            # Enable model scaling
+            elif self.scaling_num > 0:
+                model = self.model_scaling(model)
+
+            model = reinitialize_model(model, scaling_ratio=1)
+        return model
+
+    def prepare_huggingface_model(self, model: torch.nn.Module) -> torch.nn.Module:
+        original_model = model
+        original_config = model.config
+        if self.previous_model is not None:
+            pre_model = self.previous_model  # Continue training from previous model
+            base_model = functools.partial(HF_MODEL_MAP[type(original_model)], B=1, scaling=1)(original_config)
+            base_scaled_model = functools.partial(HF_MODEL_MAP[type(original_model)], B=1, scaling=2)(original_config)
+            base_shape = make_base_shapes(base_model, base_scaled_model, savefile=None)
+            set_base_shapes(pre_model, base_shape)
+            return pre_model
+        else:
+            model = functools.partial(
+                HF_MODEL_MAP[type(original_model)], B=max(1, self.fusion_num), scaling=max(1, self.scaling_num)
+            )(original_config)
+            base_model = functools.partial(HF_MODEL_MAP[type(original_model)], B=1, scaling=1)(original_config)
+            base_scaled_model = functools.partial(HF_MODEL_MAP[type(original_model)], B=1, scaling=2)(original_config)
+            base_shape = make_base_shapes(base_model, base_scaled_model, savefile=None)
+            set_base_shapes(model, base_shape)
+        return model
+
     def prepare_model(
         self,
         model: torch.nn.Module,
@@ -341,33 +395,13 @@ class _TorchAccelerator(Accelerator):
         """
         parallel_strategy_kwargs = parallel_strategy_kwargs or {}
 
-        model = symbolic_trace(model)
-
-        if self.previous_model is not None:
-            pre_model = self.previous_model  # Continue training from previous model
-
-            # print(next(pre_model.parameters())[0][0][0][0])
-
-            base_model = fuse_model(model, 1)
-            base_scaled_model = scale_fused_model(base_model, scaling_ratio=self.scaling_num)
-            base_shape = make_base_shapes(base_model, base_scaled_model, savefile=None)
-
-            set_base_shapes(pre_model, base_shape)
-            logger.info("Previous model has been loaded.")
-            model = pre_model
-            # print(next(model.parameters())[0][0][0][0])
+        if transformers_available is not None:
+            if isinstance(model, PreTrainedModel):
+                model = self.prepare_huggingface_model(model)
+            else:
+                model = self.prepare_torch_model(model)
         else:
-
-            if self.fusion_num > 0 and self.scaling_num > 0:
-                model = self.model_scaling_and_fusion(model)
-            # Enable model fusion
-            elif self.fusion_num > 0:
-                model = self.model_fusion(model)
-            # Enable model scaling
-            elif self.scaling_num > 0:
-                model = self.model_scaling(model)
-
-            model = reinitialize_model(model, scaling_ratio=1)
+            model = self.prepare_torch_model(model)
 
         # Backwards compatibility
         try:
@@ -451,6 +485,13 @@ class _TorchAccelerator(Accelerator):
                 logger.debug(f"Wrapping provided model in {DataParallel.__name__}.")
             model = DataParallel(model, **parallel_strategy_kwargs)
 
+        if self.deterministic_trial:
+            if Version(torch.__version__) >= Version("2.0"):
+                wrapped_model = _WrappedHydroModel(model)
+                compiled_forward = torch.compile(model.forward, backend="inductor")
+                wrapped_model.forward = compiled_forward
+                model = wrapped_model
+                # model = torch.compile(model, backend="eager")
         return model
 
     def prepare_data_loader(
@@ -680,7 +721,6 @@ class _TorchAccelerator(Accelerator):
 
 class _WrappedDataLoader(DataLoader):
     def __init__(self, base_dataloader: DataLoader, device: torch.device, auto_transfer: bool):
-
         self.__dict__.update(getattr(base_dataloader, "__dict__", {}))
         self._dataloader = base_dataloader
         self.dataloader_iter = None
@@ -808,3 +848,12 @@ class _WrappedOptimizer(Optimizer):
             self.scaler.update()
         else:
             self.optimizer.step(closure)
+
+
+class _WrappedHydroModel(torch.nn.Module):
+    def __init__(self, model: torch.nn.Module, **kwargs):
+        super().__init__()
+        self.model = model
+
+    def forward(self, batch, **kwargs):
+        return self.model(batch, **kwargs)

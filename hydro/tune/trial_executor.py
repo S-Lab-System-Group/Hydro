@@ -185,7 +185,6 @@ class HydroTrialExecutor(RayTrialExecutor):
                 metadata = trial.config["train_loop_config"][PREVIOUS_META]
                 with self._change_working_directory(trial):
                     remote = trial.runner.reset_meta_data.remote(metadata)
-                    # print(ray.get(remote))
 
             self._train(trial)
         return True

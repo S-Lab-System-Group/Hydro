@@ -34,7 +34,6 @@ EPOCH_DEPRECATION_WARNING = (
 
 class LRScheduler:
     def __init__(self, optimizer, last_epoch=-1, B=1, verbose=False):
-
         # Attach optimizer
         if not isinstance(optimizer, Optimizer):
             raise TypeError("{} is not an Optimizer".format(type(optimizer).__name__))
@@ -180,7 +179,7 @@ class LRScheduler:
 
         self._last_lr = [group["lr"] for group in self.optimizer.param_groups]
 
-        # print(f"TONY96 Epoch: {self.last_epoch}  LR: {self._last_lr[0]._value}")
+        # print(f"Epoch: {self.last_epoch}  LR: {self._last_lr[0]._value}")
 
 
 # Including _LRScheduler for backwards compatibility
@@ -271,16 +270,35 @@ class StepLR(LRScheduler):
             else:
                 multiplier_map = _get_coeff_like_params_map(multiplier, params, self.B)
                 res = {p: lr * multiplier_map[p].to(p.device) for p, lr in this_lr.items()}
-        else:
+        elif isinstance(this_lr, list):
             if isinstance(multiplier, (int, float)):
-                res = this_lr * multiplier
+                updated_lr = [lr * multiplier for lr in this_lr]
+                res = make_coefficient("learning rate", updated_lr, lb=0.0, ub=float("inf"))
             else:
-                assert is_coefficient(this_lr)
-                lr_tensor = this_lr.get_tensor()
+                raise NotImplementedError(f"got {this_lr}")
+                # updated_lr = torch.mul(lr_tensor, multiplier.to(lr_tensor.device))
+                # res = make_coefficient("learning rate", updated_lr, lb=0.0, ub=float("inf"))
+        elif isinstance(this_lr, float):
+            if isinstance(multiplier, (int, float)):
+                updated_lr = this_lr * multiplier
+            else:
+                updated_lr = [this_lr * mul for mul in multiplier]
+            res = make_coefficient("learning rate", updated_lr, lb=0.0, ub=float("inf"))
+        elif isinstance(this_lr, Coefficient):
+            lr_tensor = this_lr.get_tensor()
+            if isinstance(multiplier, (int, float)):
+                if isinstance(lr_tensor, list):
+                    updated_lr = [lr * multiplier for lr in lr_tensor]
+                else:
+                    updated_lr = multiplier * lr_tensor
+                res = make_coefficient("learning rate", updated_lr, lb=0.0, ub=float("inf"))
+            else:
                 updated_lr = torch.mul(lr_tensor, multiplier.to(lr_tensor.device))
                 res = make_coefficient("learning rate", updated_lr, lb=0.0, ub=float("inf"))
                 # multiplier_map = _get_coeff_like_params_map(multiplier, params, self.B)
                 # res = {p: this_lr * mul.to(p.device) for p, mul in multiplier_map.items()}
+        else:
+            raise NotImplementedError(f"got {this_lr}")
         return res
 
     def get_lr(self):

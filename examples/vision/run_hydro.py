@@ -1,6 +1,6 @@
 import argparse
 from resnet import resnet18
-from vision_utils import get_datasets, fix_seed
+from utils import get_datasets, fix_seed
 
 import torch
 import torch.nn as nn
@@ -8,10 +8,9 @@ from torch.utils.data import DataLoader
 
 import ray
 from ray import tune
-from ray.air import session
-from ray.air.config import FailureConfig, RunConfig, ScalingConfig, CheckpointConfig
+from ray.air.config import RunConfig, ScalingConfig, CheckpointConfig
 
-from hydro import HydroTuner, HydroTrainer
+from hydro import HydroTuner, HydroTrainer, session
 from hydro.tune.tune_config import TuneConfig
 import hydro.train as ht
 
@@ -44,7 +43,6 @@ def train_epoch(dataloader, model, loss_fn, optimizer, fusion_num):
         # Backpropagation
         optimizer.zero_grad()
         loss.backward()
-        # ht.backward(loss)  # For AMP support
         optimizer.step()
 
 
@@ -81,7 +79,7 @@ def validate_epoch(dataloader, model, loss_fn, fusion_num):
 
 
 def train_func(config):
-    ht.accelerate(config, amp=False)  # For AMP support
+    ht.accelerate(config)
     ht.enable_reproducibility(seed=config["seed"])
     fusion_num = config.get("FUSION_N", 0)
 
@@ -103,8 +101,8 @@ def train_func(config):
 
     worker_batch_size = config["batch_size"] // session.get_world_size()
     train_set, val_set = get_datasets(dataset)
-    train_loader = DataLoader(train_set, batch_size=worker_batch_size, num_workers=4, pin_memory=True, shuffle=True)
-    val_loader = DataLoader(val_set, batch_size=worker_batch_size, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_set, batch_size=worker_batch_size, num_workers=1, pin_memory=True, shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=worker_batch_size, num_workers=1, pin_memory=True)
     train_loader = ht.prepare_data_loader(train_loader)
     val_loader = ht.prepare_data_loader(val_loader)
 
@@ -122,16 +120,13 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, default="cifar10", help="Dataset to use")
     parser.add_argument("--max-epoch", default=50, type=int, help="Max Epochs")
     parser.add_argument("--max-sample", default=50, type=int, help="Max Samples")
-    parser.add_argument("--seed", default=10, type=int, help="Fix Random Seed for Reproducing")
+    parser.add_argument("--seed", default=1, type=int, help="Fix Random Seed for Reproducing")
 
     args, _ = parser.parse_known_args()
 
     fix_seed(args.seed)
     ray.init(address=None)
-    config = SEARCH_SPACE | {
-        "dataset": args.dataset,
-        "seed": args.seed,
-    }
+    config = SEARCH_SPACE | vars(args)
 
     trainer = HydroTrainer(
         train_func,
@@ -139,7 +134,7 @@ if __name__ == "__main__":
         scaling_config=ScalingConfig(
             num_workers=1,
             use_gpu=True,
-            resources_per_worker={"CPU": 4, "GPU": 1},
+            resources_per_worker={"CPU": 2, "GPU": 1},
         ),
     )
 
@@ -150,7 +145,6 @@ if __name__ == "__main__":
             num_samples=args.max_sample,
             metric="val_acc",
             mode="max",
-            scheduler="fifo",
             scaling_num=8,  # Hydro args
             fusion_limit=10,  # Hydro args
         ),
@@ -158,29 +152,9 @@ if __name__ == "__main__":
             log_to_file=True,
             stop={"training_iteration": args.max_epoch},
             checkpoint_config=CheckpointConfig(num_to_keep=1),
-            failure_config=FailureConfig(fail_fast=True, max_failures=0),
         ),
     )
 
     results = tuner.fit()
     df = results.get_dataframe()
-    df.to_csv(f"./results/hydro.csv")
-
-    from ast import literal_eval
-    import pandas as pd
-
-    df = pd.read_csv(f"./results/hydro.csv")
-    df.dropna(axis=1, inplace=True)
-
-    cols = [
-        "loss",
-        "val_acc",
-        "config/train_loop_config/gamma",
-        "config/train_loop_config/lr",
-        "config/train_loop_config/momentum",
-    ]
-    for col in cols:
-        df[col] = df[col].apply(literal_eval)
-
-    new_df = df.explode(cols, ignore_index=True)
-    new_df.to_csv(f"./results/hydro_parsed.csv")
+    df.to_csv("./hydro_result.csv")

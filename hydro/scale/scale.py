@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 class Multiply(nn.Module):
-    r"""A placeholder identity operator for weight scaling.
+    r"""A placeholder operator for weight scaling.
 
     Args:
         args: any argument (unused)

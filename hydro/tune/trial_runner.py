@@ -7,6 +7,7 @@ import traceback
 import math
 import copy
 import torch
+import py3nvml.py3nvml as nvml
 
 import ray
 from ray.air.config import CheckpointConfig
@@ -32,7 +33,7 @@ from ray.tune.result import (
     RESULT_DUPLICATE,
     SHOULD_CHECKPOINT,
 )
-from ray.tune.schedulers import TrialScheduler
+from ray.tune.schedulers import TrialScheduler, FIFOScheduler
 from ray.tune.stopper import NoopStopper, Stopper
 from ray.tune.search import BasicVariantGenerator, SearchAlgorithm
 from ray.tune.syncer import SyncConfig, get_node_to_storage_syncer, Syncer
@@ -108,7 +109,9 @@ class HydroTrialRunner(TrialRunner):
         scaling_num: int = 8,
         fusion_limit: Optional[Union[int, Dict]] = None,
         eager_transfer_num: int = 0,
+        trial_compile: bool = False,
         mode: Optional[str] = None,
+        profile_stage: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -117,11 +120,15 @@ class HydroTrialRunner(TrialRunner):
         self.scaling_num = scaling_num
         self.fusion_limit = fusion_limit
         self.eager_transfer_num = eager_transfer_num
+        self.trial_compile = trial_compile
         self.mode = mode  # To determine the best config for target trial
+        self.single_fidelity = isinstance(self._scheduler_alg, FIFOScheduler)
 
+        self.profile_stage = profile_stage
         self.planer = HydroPlanner(batch_size_list, scaling_num)
+
         if fusion_limit is not None:
-            self.profile_required = False
+            assert self.profile_stage == False
             if isinstance(fusion_limit, int):
                 if fusion_limit == 0:
                     self.fusion_enabled = False
@@ -133,9 +140,7 @@ class HydroTrialRunner(TrialRunner):
                 self.fusion_plan = self.planer.set_plan_manually(fusion_limit)
         else:
             self.fusion_enabled = True
-            self.profile_required = True
-            # self.fusion_plan = self.planer.set_plan_automatically()
-            raise NotImplementedError("We will support it soon.")
+            self.fusion_plan = self.planer.set_plan_manually(2)
 
         self.trial_groups = self.init_trial_groups()
         self.terminated_sample_num = 0
@@ -186,21 +191,59 @@ class HydroTrialRunner(TrialRunner):
         assert len(trial_list) <= fusion_limit
         trial_id = f"F{self.hydro_counter:04d}"  # e.g., F0000, prefix F for fusion
         self.hydro_counter += 1
-        return HydroTrial(trial_list, hydro_id=trial_id, scaling_num=self.scaling_num)
+        return HydroTrial(
+            trial_list,
+            hydro_id=trial_id,
+            scaling_num=self.scaling_num,
+            trial_compile=self.trial_compile and self.single_fidelity,
+        )
 
     def create_targettrial(self, best_trial: Trial) -> HydroTrial:
         trial_id = f"T{self.target_counter:04d}"  # e.g., T0000, prefix T for target
         self.target_counter += 1
-        return HydroTrial(
-            [best_trial],
-            hydro_id=trial_id,
-            target_trial=True,
-        )
+        return HydroTrial([best_trial], hydro_id=trial_id, target_trial=True, trial_compile=self.trial_compile)
 
     def split_trial_into_batches(self, trial_list: List[Trial], n: int) -> List[List[Trial]]:
         """Split the trial list into batches according to n."""
         for i in range(0, len(trial_list), n):
             yield trial_list[i : i + n]
+
+    def trial_prepare_for_profiling(self):
+        """Preparing trials for profiling stage."""
+        assert self.fusion_enabled
+
+        total_resource = self.trial_executor.get_total_resource()
+        occupied_resource = self.trial_executor.get_occupied_resource()
+        total_gpu, occupied_gpu = total_resource["GPU"], occupied_resource["GPU"]
+        available_gpu = total_gpu - occupied_gpu
+
+        if len(self._live_trials) == 0:
+            return
+
+        if self.trial_groups is not None:
+            largest_batch_size = max(self.batch_size_list)
+            if len(self.trial_groups) > available_gpu:  # Not enough GPU for all groups，profile only largest batch_size
+                trial_list = self.trial_groups[largest_batch_size]
+                trial_single = HydroTrial([trial_list[0]], hydro_id=f"prof_s{largest_batch_size}", scaling_num=self.scaling_num)
+                trial_dual = HydroTrial(trial_list[:2], hydro_id=f"prof_d{largest_batch_size}", scaling_num=self.scaling_num)
+                self.add_hydrotrial(trial_single)
+                self.add_hydrotrial(trial_dual)
+            else:  # Enough GPU for all groups， profile all batch_size
+                for batch_size, trial_list in self.trial_groups.items():
+                    trial_single = HydroTrial([trial_list[0]], hydro_id=f"prof_s{batch_size}", scaling_num=self.scaling_num)
+                    trial_dual = HydroTrial(trial_list[:2], hydro_id=f"prof_d{batch_size}", scaling_num=self.scaling_num)
+                    self.add_hydrotrial(trial_single)
+                    self.add_hydrotrial(trial_dual)
+        else:  # Not grouped by batch_size
+            trial_list = list(self._live_trials)
+            trial_single = HydroTrial([trial_list[0]], hydro_id="prof_s", scaling_num=self.scaling_num)
+            trial_dual = HydroTrial(trial_list[:2], hydro_id="prof_d", scaling_num=self.scaling_num)
+            self.add_hydrotrial(trial_single)
+            self.add_hydrotrial(trial_dual)
+
+        # Clean
+        self.trial_groups = self.init_trial_groups()
+        self._live_trials = set()
 
     def trial_fusion_according_plan_evenly(self):
         """Fuse trials according to the fusion plan."""
@@ -246,11 +289,13 @@ class HydroTrialRunner(TrialRunner):
         total_gpu, occupied_gpu = total_resource["GPU"], occupied_resource["GPU"]
         available_gpu = total_gpu - occupied_gpu
 
-        if len(self.trial_groups) > available_gpu:
-            self.trial_fusion_according_plan_evenly()
+        if len(self._live_trials) == 0:
             return
 
-        if self.trial_groups:
+        if self.trial_groups is not None:
+            if len(self.trial_groups) > available_gpu:
+                self.trial_fusion_according_plan_evenly()
+                return
             sorted_batch_list = sorted(self.trial_groups, key=lambda x: len(self.trial_groups[x]), reverse=True)
             self.trial_groups = {i: self.trial_groups[i] for i in sorted_batch_list}
 
@@ -281,20 +326,23 @@ class HydroTrialRunner(TrialRunner):
                     for trial_batch in trial_batches:
                         hydrotrial = self.create_hydrotrial(trial_batch, fuse_trial_num)
                         self.add_hydrotrial(hydrotrial)
-                # else:
-                #     hydrotrial = self.create_hydrotrial(trial_list, fusion_limit)
-                #     self.add_hydrotrial(hydrotrial)
         else:  # Not grouped by batch_size
             fusion_limit = self.fusion_plan
-            trial_list = self._live_trials
-            if len(trial_list) > fusion_limit:
-                trial_batches = list(self.split_trial_into_batches(trial_list, fusion_limit))
+            trial_list = list(self._live_trials)
+            trials_per_gpu = math.ceil(len(trial_list) / available_gpu)
+
+            if trials_per_gpu <= fusion_limit:
+                trial_batches = list(self.split_trial_into_batches(trial_list, trials_per_gpu))
                 for trial_batch in trial_batches:
-                    hydrotrial = self.create_hydrotrial(trial_batch, fusion_limit)
+                    hydrotrial = self.create_hydrotrial(trial_batch, trials_per_gpu)
                     self.add_hydrotrial(hydrotrial)
-            else:
-                hydrotrial = self.create_hydrotrial(trial_list, fusion_limit)
-                self.add_hydrotrial(hydrotrial)
+            else:  # len(trial_list) > fusion_limit:
+                # Try to split them evenly
+                fuse_trial_num = math.ceil(len(trial_list) / math.ceil(len(trial_list) / fusion_limit))
+                trial_batches = list(self.split_trial_into_batches(trial_list, fuse_trial_num))
+                for trial_batch in trial_batches:
+                    hydrotrial = self.create_hydrotrial(trial_batch, fuse_trial_num)
+                    self.add_hydrotrial(hydrotrial)
 
         # Clean
         self.trial_groups = self.init_trial_groups()
@@ -316,7 +364,7 @@ class HydroTrialRunner(TrialRunner):
                 t.best_metric_inside = max(t.last_result[self._metric])
             else:
                 t.best_metric_inside = min(t.last_result[self._metric])
-            if not self.best_hydrotrial or t.best_metric_inside > self.best_hydro_metric:
+            if not self.best_hydrotrial or metric_op * t.best_metric_inside > metric_op * self.best_hydro_metric:
                 self.best_hydro_metric = t.best_metric_inside
                 self.best_hydrotrial = t
                 trial = self.best_hydrotrial.get_best_trial_inside(self._metric, self.mode)
@@ -389,6 +437,57 @@ class HydroTrialRunner(TrialRunner):
         with warn_if_slow("callbacks.on_step_end"):
             self._callbacks.on_step_end(iteration=self._iteration, trials=self._hydrotrials)
 
+    def profile_GPU_memory(self, index):
+        nvml.nvmlInit()
+        handle = nvml.nvmlDeviceGetHandleByIndex(index)
+        meminfo = nvml.nvmlDeviceGetMemoryInfo(handle)
+        total_mem = meminfo.total >> 20  # Byte to MB
+        used_mem = meminfo.used >> 20
+        # meminfo = nvml.nvmlDeviceGetBAR1MemoryInfo(handle)
+        # total_mem = meminfo.bar1Total >> 20  # Byte to MB
+        # used_mem = meminfo.bar1Used >> 20
+        nvml.nvmlShutdown()
+        return total_mem, used_mem
+
+    def _process_trial_results(self, trial, results):
+        logger.debug(f"Processing trial results for trial {trial}: {results}")
+        with warn_if_slow(
+            "process_trial_results",
+            message="Processing trial results took {duration:.3f} s, "
+            "which may be a performance bottleneck. Please consider "
+            "reporting results less frequently to Ray Tune.",
+        ):
+            if self.profile_stage:
+                gpu_id_list = results[0]["gpu_ids"]
+                assert len(gpu_id_list) == 1, "Scaled model should fit in single GPU during profiling."
+                total_mem, used_mem = self.profile_GPU_memory(gpu_id_list[0])
+                self.planer.report_memory_usage(trial.hydro_id, used_mem, total_mem)
+                logger.debug(f"Total GPU memory: {total_mem} MB, {trial.hydro_id} Used: {used_mem} MB")
+
+            for i, result in enumerate(results):
+                with warn_if_slow("process_trial_result"):
+                    decision = self._process_trial_result(trial, result)
+                if decision is None:
+                    # If we didn't get a decision, this means a
+                    # non-training future (e.g. a save) was scheduled.
+                    # We do not allow processing more results then.
+                    if i < len(results) - 1:
+                        if log_once("trial_runner_buffer_checkpoint"):
+                            logger.warning(
+                                f"Trial {trial} has a non-training future "
+                                f"scheduled but {len(results) - i} results "
+                                f"left to process. This means that a "
+                                f"checkpoint was requested, but buffered "
+                                f"training was continued before it was "
+                                f"saved. Consider using non-buffered "
+                                f"training by setting the env variable "
+                                f"`TUNE_RESULT_BUFFER_LENGTH=1`."
+                            )
+                elif decision == TrialScheduler.STOP:
+                    # If the decision is to stop the trial,
+                    # ignore all results that came after that.
+                    break
+
     def setup_experiments(self, experiments: List[Experiment], total_num_samples: int) -> None:
         """Obtains any necessary information from experiments.
 
@@ -427,7 +526,7 @@ class HydroTrialRunner(TrialRunner):
         ) and all(trial.is_finished() for trial in self._hydrotrials)
 
         # Add auto transfer if no targettrial is executed in advance
-        if trials_done and len(self._targettrials) == 0:
+        if trials_done and len(self._targettrials) == 0 and not self.profile_stage:
             self.auto_transfer_target_trial()
             trials_done = False
 
@@ -475,34 +574,21 @@ class HydroTrialRunner(TrialRunner):
                 wait_for_trial = False  # wait at most one trial
                 num_pending_trials += 1
 
+        self.group_trials_according_bs(self._live_trials)
+
         # Profiling
-        if self.profile_required:
+        if self.profile_stage:
             assert len(self._trials) > 0
-            profile_trial = copy.deepcopy(self._trials[0])
-            self.profile_required = False
+            self.trial_prepare_for_profiling()
 
-            # self.fusion_plan = self.planer.set_plan_automatically(profile_trial)
-
-            if self.batch_size_list is not None:
-                largest_batch_size = max(self.batch_size_list)
-                self.update_trial_batch_size(profile_trial, largest_batch_size)
-
-            trial_s = HydroTrial(
-                [profile_trial],
-                hydro_id="prof_s",
-                scaling_num=self.scaling_num,
-            )
-            trial_d = HydroTrial([profile_trial, profile_trial], hydro_id="prof_d", scaling_num=self.scaling_num)
-
-            # TODO: Add profiling support
-            self.fusion_plan = self.planer.set_plan_manually(10)
+            # self.fusion_plan = self.planer.set_plan_manually(10)
             # self.trial_executor.start_trial(trial_s)
             # self.trial_executor.stop_trial(trial_s)
-
-        self.group_trials_according_bs(self._live_trials)
-        # self.trial_fusion_according_plan_evenly()
-        self.trial_fusion_according_plan_and_resource()
-        self.eager_transfer_target_trial_if_possible()
+        else:
+            # self.group_trials_according_bs(self._live_trials)
+            # self.trial_fusion_according_plan_evenly()
+            self.trial_fusion_according_plan_and_resource()
+            self.eager_transfer_target_trial_if_possible()
 
         with warn_if_slow("choose_trial_to_run"):
             return self._scheduler_alg.choose_trial_to_run(self)

@@ -391,7 +391,7 @@ class HydroReporterBase(ProgressReporter):
                     t.best_metric_inside = min(t.last_result[metric])
             else:
                 t.best_metric_inside = t.last_result[metric]
-            if not best_hydrotrial or t.best_metric_inside > best_metric:
+            if not best_hydrotrial or metric_op * t.best_metric_inside > metric_op * best_metric:
                 best_metric = t.best_metric_inside
                 best_hydrotrial = t
 
@@ -496,7 +496,6 @@ class HydroCLIReporter(HydroReporterBase):
         mode: Optional[str] = None,
         sort_by_metric: bool = False,
     ):
-
         super(HydroCLIReporter, self).__init__(
             metric_columns=metric_columns,
             parameter_columns=parameter_columns,

@@ -1,69 +1,20 @@
 from typing import Any, List, Dict, Set, Mapping, Optional, Union, Tuple
 
-import click
-from datetime import datetime
-from dataclasses import dataclass
-import json
 import logging
 import os
 import time
+import math
 import traceback
-import warnings
+import subprocess
 import copy
+import ast
+from xml.dom import minidom
 
-import ray
-from ray.air._internal.checkpoint_manager import CheckpointStorage
-from ray.exceptions import RayTaskError
-from ray.tune.error import _TuneStopTrialError
-from ray.tune.impl.out_of_band_serialize_dataset import out_of_band_serialize_dataset
-from ray.util import get_node_ip_address
-from ray.tune import TuneError
-from ray.tune.callback import CallbackList, Callback
-from ray.tune.experiment import Experiment
-from ray.tune.execution.trial_runner import TrialRunner, TrialRunnerWrapper, _ExperimentCheckpointManager, _TrialExecutorWrapper
-from ray.tune.execution.insufficient_resources_manager import _InsufficientResourcesManager
-from ray.tune.execution.ray_trial_executor import (
-    # RayTrialExecutor,
-    _ExecutorEventType,
-    _ExecutorEvent,
-)
-from ray.tune.result import (
-    DEBUG_METRICS,
-    DEFAULT_METRIC,
-    DONE,
-    TIME_THIS_ITER_S,
-    RESULT_DUPLICATE,
-    SHOULD_CHECKPOINT,
-)
-from ray.tune.schedulers import FIFOScheduler, TrialScheduler
-from ray.tune.stopper import NoopStopper, Stopper
-from ray.tune.search import BasicVariantGenerator, SearchAlgorithm
-from ray.tune.syncer import SyncConfig, get_node_to_storage_syncer, Syncer
 from ray.tune.experiment import Trial
-from ray.tune.utils import warn_if_slow, flatten_dict
-from ray.tune.utils.log import Verbosity, has_verbosity
-from ray.tune.execution.placement_groups import PlacementGroupFactory
-from ray.tune.utils.serialization import TuneFunctionDecoder, TuneFunctionEncoder
-from ray.tune.web_server import TuneServer
-from ray.util.annotations import DeveloperAPI
-from ray.util.debug import log_once
-
-from hydro.tune.trial_executor import HydroTrialExecutor
-from hydro.tune.trial import HydroTrial
 
 MAX_DEBUG_TRIALS = 20
 
 logger = logging.getLogger(__name__)
-
-
-import json
-import os
-import subprocess
-import sys
-import time
-import traceback
-
-from xml.dom import minidom
 
 
 def smi_getter(smi_list, gpu_id):
@@ -129,11 +80,15 @@ class HydroPlanner:
     ):
         self.batch_size_list = batch_size_list
         self.scaling_num = scaling_num
+        self.total_gpu_mem = None
+        self.memory_record = {}  # For unified batch size
+        self.memory_record_bs_s = {}
+        self.memory_record_bs_d = {}
         # self.search_alg = BasicVariantGenerator(max_concurrent_trials=1)
         # self.trial_executor = trial_executor
 
         # Init plan
-        if not self.batch_size_list:
+        if self.batch_size_list is not None:
             self.plan = {batch_size: -1 for batch_size in self.batch_size_list}
         else:
             self.plan = -1
@@ -161,31 +116,69 @@ class HydroPlanner:
         config["batch_size"] = largest_batch_size
         trial.config = {"train_loop_config": config}
 
-    def set_plan_automatically(self, trial, strategy: str = "default", with_check: bool = False):
-        """Determine the fusion plan for a HydroTrial based on profiling."""
+    def report_memory_usage(self, trial_id: str, used_mem: int, total_mem: int):
+        prof_tag, trial_tag = trial_id.split("_")[-2], trial_id.split("_")[-1]
+        assert prof_tag == "prof"
+        if self.total_gpu_mem is None:
+            self.total_gpu_mem = total_mem
 
-        print(f"TONY1111: {trial}")
-        # NOTE: Currently only profile one trial with largest batch size to avoid GPU OOM.
-        if self.batch_size_list is not None:
-            largest_batch_size = max(self.batch_size_list)
-            self.update_trial_batch_size(trial, largest_batch_size)
+        if len(trial_tag) > 1:
+            batch_size = ast.literal_eval(trial_tag[1:])
+            trial_tag = trial_tag[0]
+            if trial_tag == "s":
+                self.memory_record_bs_s[batch_size] = used_mem
+            elif trial_tag == "d":
+                self.memory_record_bs_d[batch_size] = used_mem
+            else:
+                raise ValueError(f"Unknown trial tag: {trial_tag}")
+        else:
+            self.memory_record[trial_tag] = used_mem
 
-        trial_s = HydroTrial(
-            [
-                trial,
-            ],
-            hydro_id="prof_s",
-            scaling_num=self.scaling_num,
-        )
-        trial_d = HydroTrial([trial, trial], hydro_id="prof_d", scaling_num=self.scaling_num)
+    def obtain_memory_bounded_plan(self):
+        # if self.batch_size_list is None:
+        #     assert self.plan == -1  # Not modified yet
 
-        return self.set_plan_manually(10)
+        s, d = self.memory_record["s"], self.memory_record["d"]
+        self.plan = math.floor((self.total_gpu_mem - s) / (d - s))
+        assert self.plan > 1
 
-        # self.trial_executor.start_trial(trial_s)
-        # self.trial_executor.stop_trial(trial_s)
+    def obtain_memory_bounded_plan_per_batch(self):
+        for batch_size in self.batch_size_list:
+            # assert self.plan[batch_size] == -1, f"Got plan: {self.plan}"  # Not modified yet
+            s, d = self.memory_record_bs_s[batch_size], self.memory_record_bs_d[batch_size]
+            self.plan[batch_size] = math.floor((self.total_gpu_mem - s) / (d - s))
+            assert (
+                self.plan[batch_size] > 1
+            ), f"Got plan: {self.plan}. GPU memory of terminated trials are not released correctly.Please try to set `num_workers` to 1 of dataloader or use manually set `fusion_limit`."
 
-        # self.trial_executor.start_trial(trial_d)
-        # self.trial_executor.stop_trial(trial_d)
+    def parse_memory_record(self):
+        """Parse the memory record to determine the fusion plan."""
+        if len(self.memory_record) == 2:
+            self.obtain_memory_bounded_plan()
+        elif len(self.memory_record) == 0 and len(self.memory_record_bs_s) > 0 and len(self.memory_record_bs_d) > 0:
+            self.obtain_memory_bounded_plan_per_batch()
+        else:
+            raise ValueError("Incomplete memory record.")
 
-        # TODO: support cood check
-        pass
+        return self.plan
+
+    # def set_plan_automatically(self, trial, strategy: str = "default", with_check: bool = False):
+    #     """Determine the fusion plan for a HydroTrial based on profiling."""
+
+    #     # NOTE: Currently only profile one trial with largest batch size to avoid GPU OOM.
+    #     if self.batch_size_list is not None:
+    #         largest_batch_size = max(self.batch_size_list)
+    #         self.update_trial_batch_size(trial, largest_batch_size)
+
+    #     trial_s = HydroTrial(
+    #         [
+    #             trial,
+    #         ],
+    #         hydro_id="prof_s",
+    #         scaling_num=self.scaling_num,
+    #     )
+    #     trial_d = HydroTrial([trial, trial], hydro_id="prof_d", scaling_num=self.scaling_num)
+
+    #     return self.set_plan_manually(10)
+
+    # TODO: support cood check

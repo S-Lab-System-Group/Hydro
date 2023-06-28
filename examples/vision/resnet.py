@@ -86,7 +86,7 @@ class ResNet(nn.Module):
             nn.Conv2d(3, 64, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),  # Add a maxpool layer
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
         )
         self.layer1 = self._make_layer(block, 64, num_block[0], 1)
         self.layer2 = self._make_layer(block, 128, num_block[1], 2)

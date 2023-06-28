@@ -3,6 +3,8 @@ import torch
 from torch import Tensor
 from torch.nn import Module, Parameter, init
 
+torch.nn.Linear
+
 
 class Linear(Module):
     r"""Pytorch 2.0
@@ -48,13 +50,19 @@ class Linear(Module):
     weight: Tensor
     B: int
 
-    def __init__(self, in_features: int, out_features: int, bias: bool = True, device=None, dtype=None, B=1) -> None:
+    def __init__(
+        self, in_features: int, out_features: int, bias: bool = True, device=None, dtype=None, B=1, tie_weight=False
+    ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.B = B
-        self.weight = Parameter(torch.empty((B, in_features, out_features), **factory_kwargs))
+        self.tie_weight = tie_weight
+        if tie_weight:  # For Huggingface tie weights support
+            self.weight = Parameter(torch.empty((B, out_features, in_features), **factory_kwargs))
+        else:
+            self.weight = Parameter(torch.empty((B, in_features, out_features), **factory_kwargs))
         if bias:
             self.bias = Parameter(torch.empty((B, 1, out_features), **factory_kwargs))
         else:
@@ -73,13 +81,17 @@ class Linear(Module):
                 init.uniform_(self.bias[b], -bound, bound)
 
     def forward(self, input: Tensor) -> Tensor:
-        old_shape = input.shape
+        old_shape = list(input.shape)
         input = input.reshape(old_shape[0], -1, old_shape[-1])
         if self.bias is None:
-            res = torch.bmm(input, self.weight)
+            if self.tie_weight:
+                res = torch.bmm(input, self.weight.data.transpose(1, 2))
+            else:
+                res = torch.bmm(input, self.weight)
         else:
             res = torch.baddbmm(self.bias, input, self.weight)
-        return res.reshape([old_shape[0], old_shape[1], self.out_features])
+        old_shape[-1] = self.out_features
+        return res.reshape(old_shape)
 
     def extra_repr(self) -> str:
         return "in_features={}, out_features={}, bias={}, B={}".format(

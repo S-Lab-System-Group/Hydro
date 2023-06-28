@@ -1,0 +1,41 @@
+
+name: Publish Hydro to PyPI
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+      - name: Setup Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+          cache: 'pip'
+      - name: Build source distribution
+        run: python setup.py sdist
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{secrets.HYDRO_PYPI_TOKEN}}
+
+
+      # - name: Install pypa/build
+      #     run: >-
+      #       python3 -m
+      #       pip install
+      #       build
+      #       --user
+      # - name: Build a binary wheel and a source tarball
+      #     run: >-
+      #       python3 -m
+      #       build
+      #       --sdist
+      #       --wheel
+      #       --outdir dist/
+      #       .
+

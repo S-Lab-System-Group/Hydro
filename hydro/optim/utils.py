@@ -254,8 +254,10 @@ class Coefficient:
             self._validate_range_for_element(i, e, lb=lb, ub=ub)
 
     def get_tensor(self):
-        assert len(self._ddt_map) == 1, "Currently only one tensor is supported."
-        return list(self._ddt_map.values())[0]
+        if len(self._ddt_map) == 1:
+            return list(self._ddt_map.values())[0]
+        else:  # Here, self._ddt_map is {}, len=0,
+            return self._value
 
     def _update_ddt_map(self, device, dtype):
         if isinstance(self._value, (list, tuple, np.ndarray)):

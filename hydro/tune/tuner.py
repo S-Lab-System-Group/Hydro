@@ -127,6 +127,7 @@ def run(
     scaling_num: int = 8,
     fusion_limit: Optional[Union[int, Dict]] = None,
     eager_transfer: float = 0.5,
+    trial_compile: bool = False,
     name: Optional[str] = None,
     metric: Optional[str] = None,
     mode: Optional[str] = None,
@@ -201,6 +202,9 @@ def run(
         eager_transfer: The ratio of maximum trials (`num_samples`) to start a
             target model trial. Must in (0, 1].
             1 = Disabling eager transfer. Default value is 0.5.
+        trial_compile: Whether to enable torch.compile() to further accelerate model
+            training throughput. If enabled, Hydro does not support model checkpointing
+            and multi-fidelity tuning algorithms. Default is False.
 
 
         ======================================================================
@@ -456,6 +460,9 @@ def run(
 
     result_buffer_length = None
 
+    if scheduler is None:
+        scheduler = "fifo"  # Default scheduler
+
     # Create scheduler here as we need access to some of its properties
     if isinstance(scheduler, str):
         scheduler = scheduler.lower()
@@ -474,7 +481,7 @@ def run(
         search_config = copy.deepcopy(config)
         if "train_loop_config" in search_config:
             search_config = search_config["train_loop_config"]
-        if "batch_size" in search_config:
+        if "batch_size" in search_config and isinstance(search_config["batch_size"], Categorical):
             assert isinstance(search_config["batch_size"], Categorical), "batch_size must be Categorical (tune.choice)"
             batch_size_list = search_config["batch_size"].categories
         else:
@@ -689,6 +696,7 @@ def run(
             metric=metric,
             batch_size_list=batch_size_list,
             scaling_num=scaling_num,
+            trial_compile=trial_compile,
             fusion_limit=fusion_limit,
             eager_transfer_num=int(eager_transfer * num_samples),
             mode=mode,
@@ -713,6 +721,7 @@ def run(
             # checkpoints are not synced to cloud
             driver_sync_trial_checkpoints=not bool(sync_config.upload_dir),
         )
+
     if not runner.resumed:
         for exp in experiments:
             search_alg.add_configurations([exp])
@@ -733,6 +742,75 @@ def run(
         metric=metric,
         mode=mode,
     )
+
+    # Enabling profiling to get the fusion limit
+    if fusion_limit is None:
+        assert len(experiments) == 1
+
+        if batch_size_list is None:
+            max_profile_trials = 3  # fusion=1 + fusion=2
+        else:
+            max_profile_trials = len(batch_size_list) * 3
+
+        exp_prof = Experiment(
+            name=name,
+            run=run_or_experiment,
+            stop={"training_iteration": 1},
+            time_budget_s=600,  # Maximum 10 minutes for profiling by default
+            config=config,
+            resources_per_trial=resources_per_trial,
+            num_samples=max_profile_trials,
+            local_dir=local_dir,
+            _experiment_checkpoint_dir=_experiment_checkpoint_dir,
+            sync_config=sync_config,
+            checkpoint_config=checkpoint_config,
+            trial_name_creator=trial_name_creator,
+            trial_dirname_creator=trial_dirname_creator,
+            log_to_file=log_to_file,
+            export_formats=export_formats,
+            max_failures=max_failures,
+            restore=restore,
+        )
+        search_alg_prof = HydroBasicVariantGenerator()
+        search_alg_prof.add_configurations([exp_prof])
+
+        runner_prof = HydroTrialRunner(
+            profile_stage=True,
+            search_alg=search_alg_prof,
+            scheduler=scheduler,
+            local_checkpoint_dir=experiments[0].checkpoint_dir,
+            sync_config=sync_config,
+            stopper=exp_prof.stopper,
+            resume=resume,
+            server_port=server_port,
+            fail_fast=fail_fast,
+            trial_executor=trial_executor,
+            callbacks=callbacks,
+            metric=metric,
+            batch_size_list=batch_size_list,
+            scaling_num=scaling_num,
+            trial_compile=trial_compile,
+            fusion_limit=fusion_limit,
+            eager_transfer_num=int(eager_transfer * num_samples),
+            mode=mode,
+            # Driver should only sync trial checkpoints if
+            # checkpoints are not synced to cloud
+            driver_sync_trial_checkpoints=not bool(sync_config.upload_dir),
+        )
+
+        while not runner_prof.is_finished() and not experiment_interrupted_event.is_set():
+            runner_prof.step()
+            if has_verbosity(Verbosity.V1_EXPERIMENT):
+                _report_progress(runner_prof, progress_reporter)
+        profile_taken = time.time() - tune_start
+
+        runner_prof.planer.parse_memory_record()
+        runner.fusion_limit = runner_prof.planer.plan
+        if has_verbosity(Verbosity.V1_EXPERIMENT):
+            print(f"Total profiling time: {profile_taken:.2f} seconds. Obtain fusion limit: {runner_prof.planer.plan}")
+        runner_prof.cleanup()
+        time.sleep(3)  # wait for trial termination
+
     while not runner.is_finished() and not experiment_interrupted_event.is_set():
         runner.step()
         if has_verbosity(Verbosity.V1_EXPERIMENT):
@@ -860,6 +938,7 @@ class HydroTunerInternal(TunerInternal):
                 scaling_num=self._tune_config.scaling_num,
                 fusion_limit=self._tune_config.fusion_limit,
                 eager_transfer=self._tune_config.eager_transfer,
+                trial_compile=self._tune_config.trial_compile,
             ),
             **self._tuner_kwargs,
         }

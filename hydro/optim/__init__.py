@@ -3,13 +3,14 @@ import torch.optim
 
 from .adadelta import Adadelta
 from .adam import Adam
+from .adamw import AdamW
 from .sgd import SGD
 from .lr_scheduler import StepLR
-from .utils import index_array_or_return_scalar, consolidate_hyperparams_and_determine_B
 
 OPTIMIZERS_MAP = {
     torch.optim.Adadelta: Adadelta,
     torch.optim.Adam: Adam,
+    torch.optim.AdamW: AdamW,
     torch.optim.SGD: SGD,
 }
 

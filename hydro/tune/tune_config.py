@@ -35,6 +35,11 @@ class TuneConfig:
         eager_transfer: The ratio of maximum trials (`num_samples`) to start a
             target model trial. Must in (0, 1].
             1 = Disabling eager transfer. Default value is 0.5.
+        trial_compile: Whether to enable torch.compile() to further accelerate model
+            training throughput. If enabled, Hydro does not support model checkpointing
+            and multi-fidelity tuning algorithms. Default is False.
+
+
 
         ======================================================================
         Ray args:
@@ -107,3 +112,4 @@ class TuneConfig:
     scaling_num: int = 8
     fusion_limit: Optional[Union[int, Dict]] = None
     eager_transfer: float = 0.5
+    trial_compile: bool = False

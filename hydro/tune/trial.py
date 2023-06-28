@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 
 FUSION_N = "FUSION_N"
 SCALING_N = "SCALING_N"
+COMPILE_DETERMINISTIC = "COMPILE_DETERMINISTIC"
 
 
 class HydroTrial(Trial):
@@ -116,16 +117,17 @@ class HydroTrial(Trial):
         hydro_id: Optional[str] = None,
         scaling_num: int = 8,
         target_trial: bool = False,
+        trial_compile: bool = False,
         config: Optional[Dict] = None,
         **kwargs,
     ):
-
         """Hydro Attributes"""
         self.hydro_id = hydro_id
         self.related_trials = trial_list  # Record all historical trials
         self.active_trials = trial_list  # trials that are not terminated
         self.fusion_number = len(trial_list)  # Current fusion trial number
         self.scaling_number = scaling_num
+        self.trial_compile = trial_compile
         self.target_trial = target_trial  # Whether this is the target trial
         self.unified_batch_size = self.active_trials[0].batch_size
         self.best_metric_inside = None  # The best trial
@@ -278,6 +280,9 @@ class HydroTrial(Trial):
             raise NotImplementedError("Too many rungs in ASHA.")
         self.version_tag = chr(ord(self.version_tag) + 1)
 
+    def get_gpu_ids(self):
+        return ray.get_gpu_ids()
+
     def get_active_trials_id(self):
         return [trial.trial_id for trial in self.active_trials]
 
@@ -300,6 +305,8 @@ class HydroTrial(Trial):
 
     def attach_scaling_fusion_config(self):
         hydro_config = {FUSION_N: self.fusion_number, SCALING_N: self.scaling_number}
+        if self.trial_compile:
+            hydro_config = hydro_config | {"trial_compile": True}
         if self.train_loop_wrapped:
             config = {"train_loop_config": self.grouped_config["train_loop_config"] | hydro_config}
         else:
@@ -308,6 +315,8 @@ class HydroTrial(Trial):
 
     def attach_scaling_fusion_config_for_target(self, config: Dict):
         hydro_config = {FUSION_N: self.fusion_number, SCALING_N: self.scaling_number}
+        if self.trial_compile:
+            hydro_config = hydro_config | {"trial_compile": True}
         if "train_loop_config" in config:
             attached_config = {"train_loop_config": config["train_loop_config"] | hydro_config}
         else:
@@ -335,7 +344,7 @@ class HydroTrial(Trial):
         for trial in trial_list:
             config, param_keys, evaluated_params = self.get_trial_hyperparameters(trial)
 
-            if self.unified_batch_size:
+            if self.unified_batch_size and "batch_size" in param_keys:
                 param_keys.remove("batch_size")
 
             for k, v in config.items():

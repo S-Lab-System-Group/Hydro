@@ -105,7 +105,6 @@ def fuse_model(model: fx.GraphModule, B: int = 1, inplace=False) -> torch.nn.Mod
     modules = dict(model.named_modules())
 
     for _, node in enumerate(model.graph.nodes):
-        # print(node)
         if matches_module_pattern(_SUPPORTED_FUSIBLE_MODULE_LIST, node, modules):
             ori_module = modules[node.target]
 
