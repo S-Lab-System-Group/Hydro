@@ -9,13 +9,8 @@ In this walkthrough, we will present how to tune an image classifier (e.g., ResN
     
 
 
-
-
-
 ## **Installation**
 To run this example, we need to install Hydro package beforehand. Further installation instructions can be found in [here](installation.md).
-
-
 
 
 === "pip"
