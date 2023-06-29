@@ -89,8 +89,8 @@ def train_func(config):
     model = AutoModelForCausalLM.from_config(model_config)
     model = ht.prepare_model(model)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.get("lr", 5e-5))
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=config.get("gamma", 0.2), weight_decay=0.001)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.get("lr", 5e-5), weight_decay=0.001)
+    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=config.get("gamma", 0.2))
 
     worker_batch_size = config["batch_size"] // session.get_world_size()
 

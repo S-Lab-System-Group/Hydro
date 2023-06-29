@@ -412,7 +412,9 @@ class GPT2PreTrainedModel(PreTrainedModel):
     def _init_weights(self, module):
         """Initialize the weights."""
         if isinstance(module, fnn.Linear):
-            module.weight.data.zero_()
+            for b in range(self.B):
+                nn.init.normal_(module.weight.data[b], mean=0.0, std=self.config.initializer_range)
+            # module.weight.data.zero_()
         elif isinstance(module, Conv1D):
             # module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
             if hasattr(module.weight, "infshape"):

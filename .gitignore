@@ -130,3 +130,5 @@ dmypy.json
 
 # Test scripts
 hydro/test/*.py
+
+.vscode

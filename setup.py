@@ -10,7 +10,7 @@ AUTHOR = "Qinghao Hu"
 EMAIL = "qinghao.hu@ntu.edu.sg"
 PYTHON_REQUIRES = ">=3.8"
 KEYWORDS = "AutoML, HPO"
-INSTALL_REQUIRES = ["ray==2.3.1", "torch>=2.0", "transformers>=4.30"]
+INSTALL_REQUIRES = ["ray[air]==2.3.1", "torch>=2.0", "transformers>=4.30", "grpcio==1.51.1", "py3nvml"]
 CLASSIFIERS = [
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",

@@ -1,5 +1,5 @@
-# Getting started
-
+# **Installation**
+<!-- 
 Material for MkDocs is a theme for [MkDocs], a static site generator geared
 towards (technical) project documentation. If you're familiar with Python, you
 can install Material for MkDocs with [`pip`][pip], the Python package manager.
@@ -19,6 +19,7 @@ Material for MkDocs with:
 
 
 === "pip"
+    ``` sh
     ``` sh
     pip install mkdocs-material
     ```
@@ -142,13 +143,4 @@ from `git`, you must install all required dependencies with:
 
 ```
 pip install -e mkdocs-material
-```
-
-!!! note "Enterprise support"
-
-    If you're using Material for MkDocs in your organization and need
-    assistance, e.g., to __reduce build times__, __improve performance__ or
-    ensure compliance, [__get in touch__](mailto:contact@squidfunk.com)
-    to discuss our __enterprise support__ offerings. We're happy to help!
-
-  [GitHub]: https://github.com/squidfunk/mkdocs-material
+``` -->

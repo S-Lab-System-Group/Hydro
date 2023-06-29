@@ -20,7 +20,7 @@ We highlight three key features of Hydro:
 
 ✨ **Automatic Pipeline**. Hydro streamlines the surrogate model generation process and seamlessly integrates with Ray, offering a user-friendly solution for tuning.
 
-🎉 **Quality Maintenance**. Hydro typically can well maintain the tuned model quality even using a scaled and fused model.
+🎉 **Quality Maintenance**. Hydro typically can well maintain the tuned model quality even using a scaled and fused model for tuning.
 
 ## Getting Started
 

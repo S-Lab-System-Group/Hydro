@@ -95,10 +95,11 @@ copyright: |
 # Page tree
 nav:
   - Home: index.md
-  # - Getting Started:
-  #     - Installation: getting_started/installation.md
-  # - Documentation:
-  #     - overview/index.md
+  - Getting Started:
+      - Quick Start: getting_started/quick_start.md
+      - Installation: getting_started/installation.md
+  - API:
+      - TuneConfig: api/TuneConfig.md
 
 extra:
   social:

@@ -13,23 +13,29 @@ hide:
 
 Hydro is a system that automatically applies the hyperparameter transfer theory together with multiple system techniques to jointly improve the tuning efficiency.
 
-We highlight three key features of Hydro:
-
 🚀 **Efficient Tuning**. Hydro scales down the model size and fuses multiple trials can significantly improve training throughput and hardware efficiency.
 
 ✨ **Automatic Pipeline**. Hydro streamlines the surrogate model generation process and seamlessly integrates with Ray, offering a user-friendly solution for tuning.
 
-🎉 **Quality Maintenance**. Hydro typically can well maintain the tuned model quality even using a scaled and fused model.
-
-<!-- ## Getting Started
-
-Refer to [Getting Started](getting_started/index.md) for instructions on environment setup, installation, and integration.
-We also provide integration examples:
-
-- Integrating Zeus with Computer Vision
-    - [ImageNet](https://github.com/SymbioticLab/Zeus/tree/master/examples/imagenet){.external}
-    - [CIFAR100](https://github.com/SymbioticLab/Zeus/tree/master/examples/cifar100){.external}
-- [Integrating Zeus with Natural Language Processing and Huggingface](https://github.com/SymbioticLab/Zeus/tree/master/examples/capriccio){.external}
-- [Running trace-driven simulation on single recurring jobs and the Alibaba GPU cluster trace](https://github.com/SymbioticLab/Zeus/tree/master/examples/trace_driven){.external} -->
+🎉 **Quality Maintenance**. Hydro typically can well maintain the tuned model quality even using a scaled and fused model for tuning.
 
 
+!!! success "Getting Started"
+
+    + [**Tutorial: Walkthrough of a Hydro Tuning Example**](getting_started/quick_start.md)
+
+    + **More Examples**:
+        + [**`vision`: Image Classification Example**](https://github.com/S-Lab-System-Group/Hydro/tree/master/examples/vision)
+        + [**`language`: Language Modeling Example**](https://github.com/S-Lab-System-Group/Hydro/tree/master/examples/language)
+
+??? question "Need More Support?"
+
+    If you have any question or suggestion on improving Hydro, please [let us know](https://github.com/S-Lab-System-Group/Hydro/issues/new/choose).
+
+
+## Acknowledgements
+
+Hydro is built upon many fabulous open-source repositories, including
+
+<img src="docs/assets/external/ray.ico" alt="Image" width="15" height="15">[ray](https://github.com/ray-project/ray) | [mup](https://github.com/microsoft/mup) | [hfta](https://github.com/UofT-EcoSystem/hfta) | <img src="docs/assets/external/pytorch-icon.svg" alt="Image" width="15" height="15">[pytorch](https://github.com/pytorch/pytorch) | <img src="docs/assets/external/hf-logo.svg" alt="Image" width="15" height="15">[
+transformers](https://github.com/huggingface/transformers)
