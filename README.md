@@ -30,6 +30,8 @@ Refer to [Getting started](https://s-lab-system-group.github.io/Hydro/) for comp
 
 ## Installation
 
+Hydro is published as a Python package and can be installed with pip directly.
+
 ```
 pip install hydro-tune
 ```
