@@ -45,6 +45,13 @@ def get_datasets(dataset):
             )
     elif dataset == "cifar100":
         normalize = transforms.Normalize(mean=[0.5071, 0.4865, 0.4409], std=[0.2673, 0.2564, 0.2762])
+        lock_file = Path("~/data/data.lock").expanduser()
+
+        if not lock_file.exists():
+            if not Path("~/data").exists():
+                Path("~/data").expanduser().mkdir()
+            with open(lock_file, "w") as f:
+                f.write("")
         with FileLock(Path("~/data/data.lock").expanduser()):
             train_dataset = datasets.CIFAR100(
                 root="~/data",
@@ -59,6 +66,13 @@ def get_datasets(dataset):
             )
     elif dataset == "cifar10":
         normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2470, 0.2435, 0.2616])
+        lock_file = Path("~/data/data.lock").expanduser()
+
+        if not lock_file.exists():
+            if not Path("~/data").exists():
+                Path("~/data").expanduser().mkdir()
+            with open(lock_file, "w") as f:
+                f.write("")
         with FileLock(Path("~/data/data.lock").expanduser()):
             train_dataset = datasets.CIFAR10(
                 root="~/data",

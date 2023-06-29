@@ -31,11 +31,3 @@ Hydro is a system that automatically applies the hyperparameter transfer theory 
 ??? question "Need More Support?"
 
     If you have any question or suggestion on improving Hydro, please [let us know](https://github.com/S-Lab-System-Group/Hydro/issues/new/choose).
-
-
-## Acknowledgements
-
-Hydro is built upon many fabulous open-source repositories, including
-
-<img src="docs/assets/external/ray.ico" alt="Image" width="15" height="15">[ray](https://github.com/ray-project/ray) | [mup](https://github.com/microsoft/mup) | [hfta](https://github.com/UofT-EcoSystem/hfta) | <img src="docs/assets/external/pytorch-icon.svg" alt="Image" width="15" height="15">[pytorch](https://github.com/pytorch/pytorch) | <img src="docs/assets/external/hf-logo.svg" alt="Image" width="15" height="15">[
-transformers](https://github.com/huggingface/transformers)
